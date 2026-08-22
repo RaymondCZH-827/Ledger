@@ -5,14 +5,14 @@ import { getFirestore } from "firebase/firestore";
 // Replace these with your actual values from the Firebase console
 // (Project settings → General → Your apps → SDK setup and configuration).
 const firebaseConfig = {
-  apiKey: "AIzaSyAmRJZO3G2w_FGMMlboFhRRrQOb4P-Sxto",
-  authDomain: "ledger---trading-journal.firebaseapp.com",
-  databaseURL: "https://ledger---trading-journal-default-rtdb.firebaseio.com",
-  projectId: "ledger---trading-journal",
-  storageBucket: "ledger---trading-journal.firebasestorage.app",
-  messagingSenderId: "936229743667",
-  appId: "1:936229743667:web:1e3764624669ea529d4746",
-  measurementId: "G-0DG6VBPXNQ"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
 const app = initializeApp(firebaseConfig);
