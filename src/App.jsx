@@ -680,6 +680,10 @@ export default function TradingJournal() {
           padding: 9px 11px; border-radius: 7px; font-family: 'IBM Plex Mono', monospace; font-size: 13px;
           outline: none; transition: border-color .15s;
         }
+        .lj-select option {
+          background: ${COLORS.surface};
+          color: ${COLORS.text};
+        }
         .lj-textarea { font-family: 'Inter', sans-serif; resize: vertical; min-height: 80px; }
         .lj-input:focus, .lj-select:focus, .lj-textarea:focus { border-color: ${COLORS.gold}; }
         .lj-label { display: block; font-size: 11.5px; color: ${COLORS.textFaint}; margin-bottom: 6px; font-weight: 500; letter-spacing: .02em; }
@@ -1895,7 +1899,7 @@ function DayTradesModal({ date, trades, onClose, onEditTrade, onViewShot }) {
 function TradeModal({ initial, onClose, onSave, checklistItems, onAddChecklistItem, onRemoveChecklistItem, confluenceOptions, onAddConfluenceOption, onRemoveConfluenceOption }) {
   const [form, setForm] = useState(() => initial || {
     date: todayStr(), symbol: "", direction: "long", entry: "", exit: "", stopLoss: "", size: "", contractSize: "",
-    mood: "", session: "", confluences: "", notes: "", checklist: {},
+    mood: "", session: "", confluences: "", notes: "", checklist: {}, partials: [], breakevens: [],
   });
   const [error, setError] = useState("");
   const [screenshot, setScreenshot] = useState(null);
@@ -1956,6 +1960,26 @@ function TradeModal({ initial, onClose, onSave, checklistItems, onAddChecklistIt
       const next = current.includes(text) ? current.filter((c) => c !== text) : [...current, text];
       return { ...f, confluences: next.join(", ") };
     });
+  };
+
+  const addPartialRow = () => {
+    setForm((f) => ({ ...f, partials: [...(f.partials || []), { id: uid(), price: "", size: "" }] }));
+  };
+  const removePartialRow = (id) => {
+    setForm((f) => ({ ...f, partials: (f.partials || []).filter((p) => p.id !== id) }));
+  };
+  const updatePartialRow = (id, field, value) => {
+    setForm((f) => ({ ...f, partials: (f.partials || []).map((p) => (p.id === id ? { ...p, [field]: value } : p)) }));
+  };
+
+  const addBreakevenRow = () => {
+    setForm((f) => ({ ...f, breakevens: [...(f.breakevens || []), { id: uid(), price: "", size: "" }] }));
+  };
+  const removeBreakevenRow = (id) => {
+    setForm((f) => ({ ...f, breakevens: (f.breakevens || []).filter((b) => b.id !== id) }));
+  };
+  const updateBreakevenRow = (id, field, value) => {
+    setForm((f) => ({ ...f, breakevens: (f.breakevens || []).map((b) => (b.id === id ? { ...b, [field]: value } : b)) }));
   };
 
   const handleFile = async (e) => {
@@ -2113,6 +2137,80 @@ function TradeModal({ initial, onClose, onSave, checklistItems, onAddChecklistIt
           </div>
         )}
         {previewRisk === null && <div style={{ marginBottom: 14 }} />}
+
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <label className="lj-label" style={{ marginBottom: 0 }}>Partials taken</label>
+            <button
+              type="button"
+              onClick={addPartialRow}
+              className="lj-icon-btn"
+              title="Add a partial"
+              style={{ border: `1px solid ${COLORS.border}`, borderRadius: 6 }}
+            >
+              <Plus size={13} />
+            </button>
+          </div>
+          {(form.partials || []).length === 0 ? (
+            <div style={{ fontSize: 11.5, color: COLORS.textFaint }}>No partials logged — click + to add one.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {form.partials.map((p, idx) => (
+                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 12, color: COLORS.textFaint, width: 16, flexShrink: 0, fontFamily: "'IBM Plex Mono', monospace" }}>{idx + 1}.</span>
+                  <input
+                    type="number" step="any" className="lj-input" placeholder="Price"
+                    value={p.price} onChange={(e) => updatePartialRow(p.id, "price", e.target.value)}
+                  />
+                  <input
+                    type="number" step="any" className="lj-input" placeholder="Size"
+                    value={p.size} onChange={(e) => updatePartialRow(p.id, "size", e.target.value)}
+                  />
+                  <button type="button" onClick={() => removePartialRow(p.id)} className="lj-icon-btn" title="Remove">
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <label className="lj-label" style={{ marginBottom: 0 }}>Breakeven</label>
+            <button
+              type="button"
+              onClick={addBreakevenRow}
+              className="lj-icon-btn"
+              title="Add a breakeven adjustment"
+              style={{ border: `1px solid ${COLORS.border}`, borderRadius: 6 }}
+            >
+              <Plus size={13} />
+            </button>
+          </div>
+          {(form.breakevens || []).length === 0 ? (
+            <div style={{ fontSize: 11.5, color: COLORS.textFaint }}>No breakeven adjustments logged — click + to add one.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {form.breakevens.map((b, idx) => (
+                <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 12, color: COLORS.textFaint, width: 16, flexShrink: 0, fontFamily: "'IBM Plex Mono', monospace" }}>{idx + 1}.</span>
+                  <input
+                    type="number" step="any" className="lj-input" placeholder="Price"
+                    value={b.price} onChange={(e) => updateBreakevenRow(b.id, "price", e.target.value)}
+                  />
+                  <input
+                    type="number" step="any" className="lj-input" placeholder="Size"
+                    value={b.size} onChange={(e) => updateBreakevenRow(b.id, "size", e.target.value)}
+                  />
+                  <button type="button" onClick={() => removeBreakevenRow(b.id)} className="lj-icon-btn" title="Remove">
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div className="lj-two-col" style={{ marginBottom: 14 }}>
           <div>
