@@ -308,13 +308,14 @@ export default function TradingJournal() {
     persist(next);
   }, [persist]);
 
-  const upsertTrade = async (fields, screenshot) => {
+  const upsertTrade = async (fields, screenshots) => {
     const id = editingId || uid();
     const prevTrade = editingId ? trades.find((t) => t.id === editingId) : null;
-    // screenshot === undefined means "user didn't touch it" — keep whatever was there before.
-    // screenshot === null means "user explicitly removed it". A string means "user set/replaced it".
-    const hasShot = screenshot === undefined ? !!(prevTrade && prevTrade.hasShot) : !!screenshot;
-    const record = { ...fields, id, hasShot, account: editingId ? fields.account || activeAccount : activeAccount };
+    // screenshots === undefined means "user didn't touch them" — keep whatever was there before.
+    // An array (possibly empty) means "user set/replaced/cleared the set of screenshots".
+    const hasShot = screenshots === undefined ? !!(prevTrade && prevTrade.hasShot) : screenshots.length > 0;
+    const screenshotCount = screenshots === undefined ? (prevTrade ? prevTrade.screenshotCount || 0 : 0) : screenshots.length;
+    const record = { ...fields, id, hasShot, screenshotCount, account: editingId ? fields.account || activeAccount : activeAccount };
     let next;
     if (editingId) {
       next = trades.map((t) => (t.id === editingId ? record : t));
@@ -323,12 +324,12 @@ export default function TradingJournal() {
     }
     setTrades(next);
     await persist(next);
-    if (screenshot !== undefined) {
+    if (screenshots !== undefined) {
       try {
-        if (screenshot) {
-          await window.storage.set(`shot:${id}`, screenshot, false);
+        if (screenshots.length > 0) {
+          await window.storage.set(`shot:${id}`, JSON.stringify(screenshots), false);
         } else {
-          try { await window.storage.delete(`shot:${id}`, false); } catch (e) { /* no existing shot */ }
+          try { await window.storage.delete(`shot:${id}`, false); } catch (e) { /* no existing shots */ }
         }
       } catch (e) { /* screenshot save best-effort */ }
     }
@@ -1902,12 +1903,12 @@ function TradeModal({ initial, onClose, onSave, checklistItems, onAddChecklistIt
     mood: "", session: "", confluences: "", notes: "", checklist: {}, partials: [], breakevens: [],
   });
   const [error, setError] = useState("");
-  const [screenshot, setScreenshot] = useState(null);
+  const [screenshots, setScreenshots] = useState([]);
   const [shotLoading, setShotLoading] = useState(!!(initial && initial.hasShot));
   const [shotLoadFailed, setShotLoadFailed] = useState(false);
   const [screenshotTouched, setScreenshotTouched] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [enlarged, setEnlarged] = useState(false);
+  const [enlargedIndex, setEnlargedIndex] = useState(null);
   const [newChecklistItem, setNewChecklistItem] = useState("");
   const [newConfluence, setNewConfluence] = useState("");
   const [sizeInfoOpen, setSizeInfoOpen] = useState(false);
@@ -1933,8 +1934,19 @@ function TradeModal({ initial, onClose, onSave, checklistItems, onAddChecklistIt
         try {
           const res = await window.storage.get(`shot:${initial.id}`, false);
           if (!cancelled) {
-            if (res && res.value) setScreenshot(res.value);
-            else setShotLoadFailed(true);
+            if (res && res.value) {
+              let list = [];
+              try {
+                const parsed = JSON.parse(res.value);
+                list = Array.isArray(parsed) ? parsed : [res.value];
+              } catch (e) {
+                // Older trades stored a single raw data URL string, not JSON.
+                list = [res.value];
+              }
+              setScreenshots(list);
+            } else {
+              setShotLoadFailed(true);
+            }
           }
         } catch (e) {
           if (!cancelled) setShotLoadFailed(true);
@@ -1983,24 +1995,24 @@ function TradeModal({ initial, onClose, onSave, checklistItems, onAddChecklistIt
   };
 
   const handleFile = async (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    if (!files.length) return;
     setUploading(true);
     try {
-      const dataUrl = await resizeImage(file);
-      setScreenshot(dataUrl);
+      const dataUrls = await Promise.all(files.map((f) => resizeImage(f)));
+      setScreenshots((prev) => [...prev, ...dataUrls]);
       setScreenshotTouched(true);
       setShotLoadFailed(false);
     } catch (err) {
-      setError("Couldn't process that image.");
+      setError("Couldn't process one of those images.");
     } finally {
       setUploading(false);
       e.target.value = "";
     }
   };
 
-  const removeScreenshot = () => {
-    setScreenshot(null);
+  const removeScreenshot = (index) => {
+    setScreenshots((prev) => prev.filter((_, i) => i !== index));
     setScreenshotTouched(true);
     setShotLoadFailed(false);
   };
@@ -2010,9 +2022,9 @@ function TradeModal({ initial, onClose, onSave, checklistItems, onAddChecklistIt
       setError("Fill in date, symbol, entry, exit, and size.");
       return;
     }
-    // Only pass a screenshot value when the user actually added or removed one —
-    // otherwise pass undefined so an existing screenshot that failed to preload isn't wiped out.
-    onSave({ ...form, symbol: form.symbol.toUpperCase().trim() }, screenshotTouched ? screenshot : undefined);
+    // Only pass screenshots when the user actually added or removed one —
+    // otherwise pass undefined so existing screenshots that failed to preload aren't wiped out.
+    onSave({ ...form, symbol: form.symbol.toUpperCase().trim() }, screenshotTouched ? screenshots : undefined);
   };
 
   const previewPnl = computePnl(form);
@@ -2323,38 +2335,45 @@ function TradeModal({ initial, onClose, onSave, checklistItems, onAddChecklistIt
         </div>
 
         <div style={{ marginBottom: 14 }}>
-          <label className="lj-label">Screenshot (optional)</label>
+          <label className="lj-label">Screenshots (optional)</label>
           {shotLoading ? (
-            <div style={{ fontSize: 12, color: COLORS.textFaint }}>Loading screenshot…</div>
-          ) : screenshot ? (
-            <div style={{ position: "relative", display: "inline-block" }}>
-              <img
-                src={screenshot}
-                alt="Trade screenshot"
-                onClick={() => setEnlarged(true)}
-                style={{ maxWidth: "100%", maxHeight: 220, borderRadius: 8, border: `1px solid ${COLORS.border}`, display: "block", cursor: "zoom-in" }}
-              />
-              <button
-                onClick={removeScreenshot}
-                style={{ position: "absolute", top: 6, right: 6, background: "rgba(11,14,20,0.85)", border: `1px solid ${COLORS.border}`, borderRadius: 6, color: COLORS.text, padding: 4, cursor: "pointer", display: "flex" }}
-                title="Remove screenshot"
-              >
-                <X size={13} />
-              </button>
-            </div>
+            <div style={{ fontSize: 12, color: COLORS.textFaint }}>Loading screenshots…</div>
           ) : (
-            <label style={{
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 8, border: `1px dashed ${COLORS.border}`,
-              borderRadius: 8, padding: "18px 0", cursor: "pointer", color: COLORS.textDim, fontSize: 12.5,
-            }}>
-              <ImagePlus size={16} />
-              {uploading ? "Processing…" : "Click to upload a chart screenshot"}
-              <input type="file" accept="image/*" onChange={handleFile} style={{ display: "none" }} disabled={uploading} />
-            </label>
+            <>
+              {screenshots.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
+                  {screenshots.map((src, i) => (
+                    <div key={i} style={{ position: "relative", width: 96, height: 96 }}>
+                      <img
+                        src={src}
+                        alt={`Trade screenshot ${i + 1}`}
+                        onClick={() => setEnlargedIndex(i)}
+                        style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 8, border: `1px solid ${COLORS.border}`, display: "block", cursor: "zoom-in" }}
+                      />
+                      <button
+                        onClick={() => removeScreenshot(i)}
+                        style={{ position: "absolute", top: 4, right: 4, background: "rgba(11,14,20,0.85)", border: `1px solid ${COLORS.border}`, borderRadius: 6, color: COLORS.text, padding: 3, cursor: "pointer", display: "flex" }}
+                        title="Remove screenshot"
+                      >
+                        <X size={11} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <label style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 8, border: `1px dashed ${COLORS.border}`,
+                borderRadius: 8, padding: "16px 0", cursor: uploading ? "default" : "pointer", color: COLORS.textDim, fontSize: 12.5,
+              }}>
+                <ImagePlus size={16} />
+                {uploading ? "Processing…" : screenshots.length > 0 ? "Add more screenshots" : "Click to upload chart screenshots"}
+                <input type="file" accept="image/*" multiple onChange={handleFile} style={{ display: "none" }} disabled={uploading} />
+              </label>
+            </>
           )}
           {shotLoadFailed && (
             <div style={{ fontSize: 11, color: COLORS.textFaint, marginTop: 6, lineHeight: 1.4 }}>
-              Couldn't preload the existing screenshot for preview, but it's still saved and won't be touched unless you upload or remove one here.
+              Couldn't preload the existing screenshots for preview, but they're still saved and won't be touched unless you upload or remove one here.
             </div>
           )}
         </div>
@@ -2372,15 +2391,33 @@ function TradeModal({ initial, onClose, onSave, checklistItems, onAddChecklistIt
         {error && <div style={{ color: COLORS.loss, fontSize: 12, marginTop: 10 }}>{error}</div>}
       </div>
 
-      {enlarged && screenshot && (
+      {enlargedIndex !== null && screenshots[enlargedIndex] && (
         <div
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: 24 }}
-          onClick={() => setEnlarged(false)}
+          onClick={() => setEnlargedIndex(null)}
         >
-          <button className="lj-icon-btn" onClick={() => setEnlarged(false)} style={{ position: "absolute", top: 20, right: 20, color: COLORS.text }}>
+          <button className="lj-icon-btn" onClick={() => setEnlargedIndex(null)} style={{ position: "absolute", top: 20, right: 20, color: COLORS.text }}>
             <X size={20} />
           </button>
-          <img src={screenshot} alt="Trade screenshot" style={{ maxWidth: "90vw", maxHeight: "88vh", borderRadius: 10, border: `1px solid ${COLORS.border}` }} onClick={(e) => e.stopPropagation()} />
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }} onClick={(e) => e.stopPropagation()}>
+            {screenshots.length > 1 && (
+              <button
+                className="lj-icon-btn" onClick={() => setEnlargedIndex((i) => Math.max(0, i - 1))} disabled={enlargedIndex === 0}
+                style={{ color: COLORS.text, opacity: enlargedIndex === 0 ? 0.3 : 1 }}
+              >
+                <ChevronLeft size={22} />
+              </button>
+            )}
+            <img src={screenshots[enlargedIndex]} alt="Trade screenshot" style={{ maxWidth: "82vw", maxHeight: "80vh", borderRadius: 10, border: `1px solid ${COLORS.border}` }} />
+            {screenshots.length > 1 && (
+              <button
+                className="lj-icon-btn" onClick={() => setEnlargedIndex((i) => Math.min(screenshots.length - 1, i + 1))} disabled={enlargedIndex === screenshots.length - 1}
+                style={{ color: COLORS.text, opacity: enlargedIndex === screenshots.length - 1 ? 0.3 : 1 }}
+              >
+                <ChevronRight size={22} />
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -2388,7 +2425,9 @@ function TradeModal({ initial, onClose, onSave, checklistItems, onAddChecklistIt
 }
 
 function ScreenshotLightbox({ id, onClose }) {
-  const [src, setSrc] = useState(null);
+  const [images, setImages] = useState([]);
+  const [index, setIndex] = useState(0);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
   useEffect(() => {
@@ -2397,15 +2436,39 @@ function ScreenshotLightbox({ id, onClose }) {
       try {
         const res = await window.storage.get(`shot:${id}`, false);
         if (!cancelled) {
-          if (res && res.value) setSrc(res.value);
-          else setError(true);
+          if (res && res.value) {
+            let list = [];
+            try {
+              const parsed = JSON.parse(res.value);
+              list = Array.isArray(parsed) ? parsed : [res.value];
+            } catch (e) {
+              // Older trades stored a single raw data URL string, not JSON.
+              list = [res.value];
+            }
+            if (list.length > 0) setImages(list);
+            else setError(true);
+          } else {
+            setError(true);
+          }
         }
       } catch (e) {
         if (!cancelled) setError(true);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => { cancelled = true; };
   }, [id]);
+
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (e.key === "ArrowLeft") setIndex((i) => (i > 0 ? i - 1 : i));
+      if (e.key === "ArrowRight") setIndex((i) => (i < images.length - 1 ? i + 1 : i));
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [images.length, onClose]);
 
   return (
     <div style={{
@@ -2415,12 +2478,41 @@ function ScreenshotLightbox({ id, onClose }) {
       <button className="lj-icon-btn" onClick={onClose} style={{ position: "absolute", top: 20, right: 20, color: COLORS.text }}>
         <X size={20} />
       </button>
+
       {error ? (
         <div style={{ color: COLORS.textDim, fontFamily: "'Inter', sans-serif" }}>Couldn't load this screenshot.</div>
-      ) : src ? (
-        <img src={src} alt="Trade screenshot" style={{ maxWidth: "90vw", maxHeight: "88vh", borderRadius: 10, border: `1px solid ${COLORS.border}` }} onClick={(e) => e.stopPropagation()} />
-      ) : (
+      ) : loading ? (
         <div style={{ color: COLORS.textDim, fontFamily: "'Inter', sans-serif" }}>Loading…</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            {images.length > 1 && (
+              <button
+                className="lj-icon-btn" onClick={() => setIndex((i) => Math.max(0, i - 1))} disabled={index === 0}
+                style={{ color: COLORS.text, opacity: index === 0 ? 0.3 : 1 }}
+              >
+                <ChevronLeft size={22} />
+              </button>
+            )}
+            <img
+              src={images[index]} alt={`Trade screenshot ${index + 1}`}
+              style={{ maxWidth: "82vw", maxHeight: "80vh", borderRadius: 10, border: `1px solid ${COLORS.border}` }}
+            />
+            {images.length > 1 && (
+              <button
+                className="lj-icon-btn" onClick={() => setIndex((i) => Math.min(images.length - 1, i + 1))} disabled={index === images.length - 1}
+                style={{ color: COLORS.text, opacity: index === images.length - 1 ? 0.3 : 1 }}
+              >
+                <ChevronRight size={22} />
+              </button>
+            )}
+          </div>
+          {images.length > 1 && (
+            <div style={{ fontSize: 12.5, color: COLORS.textDim, fontFamily: "'IBM Plex Mono', monospace" }}>
+              {index + 1} / {images.length}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
